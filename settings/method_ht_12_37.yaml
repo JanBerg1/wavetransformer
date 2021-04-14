@@ -10,19 +10,19 @@ data:
   input_field_name: 'features'
   output_field_name: 'words_ind'
   load_into_memory: No
-  batch_size: 12 
+  batch_size: 1
   shuffle: Yes
-  num_workers: 30
+  num_workers: 2
   drop_last: Yes
   use_multiple_mode: No
-  use_validation_split: Yes 
+  use_validation_split: No
 # ----------------------
 training:
   nb_epochs: 300
-  patience: 10
-  loss_thr: !!float 1e-4
+  patience: 100
+  loss_thr: !!float 1e-2
   optimizer:
-    lr: !!float 1e-3
+    lr: !!float 1e-4
   grad_norm:
     value: !!float 1.
     norm: 2

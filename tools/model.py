@@ -7,6 +7,7 @@ from platform import processor
 from pathlib import Path
 from collections import OrderedDict
 
+import torch
 from torch import cuda, zeros, Tensor, load as pt_load
 from torch.nn import Module
 from torch.nn.utils import clip_grad_norm_
@@ -96,8 +97,10 @@ def module_epoch_passing(data: DataLoader,
                          optimizer: Union[Optimizer, None],
                          use_y: Optional[bool] = False,
                          grad_norm: Optional[int] = 1,
-                         grad_norm_val: Optional[float] = -1.) \
-        -> Tuple[Tensor, List[Tensor], List[Tensor], List[str]]:
+                         grad_norm_val: Optional[float] = -1.,
+                         soft_targets: dict = None,
+                         dist_obj: Union[Callable[[Tensor, Tensor], Tensor], None] = None) \
+        -> Tuple[Tensor, List[Tensor], List[Tensor], List[str], Tensor]:
     """One full epoch passing.
 
     :param data: Data of the epoch.
@@ -121,9 +124,12 @@ def module_epoch_passing(data: DataLoader,
              (if specified).
     :rtype: torch.Tensor, list[torch.Tensor], list[torch.Tensor], list[str]
     """
+    
+    # OBJECTIVE TYYPPIÄ CROSS ENTROPY (LOSS)
+    
     has_optimizer = optimizer is not None
     objective_output: Tensor = zeros(len(data))
-
+    dist_objective_output: Tensor = zeros(len(data))
     output_y_hat = []
     output_y = []
     f_names = []
@@ -134,25 +140,65 @@ def module_epoch_passing(data: DataLoader,
         y = y[:, 1:]
         y_hat = y_hat.transpose(0, 1)
         if not use_y:  # inference
+            
             y_hat = y_hat[:, 1:]
+           
 
         try:
-            if use_y:
-                y_hat = y_hat[:, :y.size()[1], :]
-            loss = objective(y_hat.contiguous().view(-1, y_hat.size()[-1]),
-                             y.contiguous().view(-1))
-            if has_optimizer:
-                optimizer.zero_grad()
-                if grad_norm_val > -1:
-                    clip_grad_norm_(module.parameters(),
-                                    max_norm=grad_norm_val,
-                                    norm_type=grad_norm)
-                loss.backward()
-                optimizer.step()
-                # scheduler.step()
-                # plot_grad_flow(module.named_parameters())
+            with torch.autograd.set_detect_anomaly(True):
+                if use_y:
+    
+                    y_hat = y_hat[:, :y.size()[1], :]
+                loss = objective(y_hat.contiguous().view(-1, y_hat.size()[-1]),
+                                y.contiguous().view(-1))
+                objective_output[i] = loss.item()
+                if soft_targets:
+                    # Add this value to settings
+                    x = 0.5
+                    st = [soft_targets[x] for x in f_names_tmp]
+                    st = torch.stack(st)
+                    st = st.cuda()
+                    st = st.view(-1, st.size()[2],st.size()[3])
+                    y_hat = torch.clone(y_hat)
+                    if(st.size() != y_hat.size()):
+                        if(st.size()[1] > y_hat.size()[1]):
+                            target = torch.zeros_like(st)
+                            target = torch.clamp(target,min=1e-4)
+                            target[:, :y_hat.size()[1], :] = y_hat
+                            y_hat = target
+                               # y_hat = y_hat[:, :st.size()[1], :]
+                        else:
+                            target = torch.zeros_like(y_hat)
+                            target = torch.clamp(target,min=1e-4)
+                            target[:, :st.size()[1], :] = st
+                            st = target
+                            
+                             #   st = st[:, :y_hat.size()[1], :]
+                    softmax = torch.nn.LogSoftmax(dim=2)
+                    y_hat = softmax(y_hat/2)
+                    st = torch.clamp(st,min=1e-4)
+                    #st = softmax(st)
+                    softmax2 = torch.nn.Softmax(dim=2)
+                    st = softmax2(st/2)
+                    #st = st/2
+                    dist_loss = dist_obj(y_hat,st)
+                    dist_objective_output[i] = dist_loss.item()
+                    loss = (1-x)*loss + x*dist_loss
+                    #loss = loss
+                
+                if has_optimizer:
+                    optimizer.zero_grad()
+                    if grad_norm_val > -1:
+                        clip_grad_norm_(module.parameters(),
+                                            max_norm=grad_norm_val,
+                                            norm_type=grad_norm)
+                    loss.backward(retain_graph=True)
+                    optimizer.step()
+                        # scheduler.step()
+                        # plot_grad_flow(module.named_parameters())
+    
+                
 
-            objective_output[i] = loss.item()
         except TypeError:
             pass
         try:
@@ -162,7 +208,21 @@ def module_epoch_passing(data: DataLoader,
             pass
         except TypeError:
             pass
-    return objective_output, output_y_hat, output_y, f_names
+    return objective_output, output_y_hat, output_y, f_names, dist_objective_output
+
+def module_distill_pass(data: DataLoader,
+                        module: Module,
+                        use_y: Optional[bool] = True) \
+        -> dict:
+    soft_targets = {}
+    for i, example in enumerate(data):
+        y_hat, y, f_names_tmp = module_forward_passing(example, module, use_y)
+        y = y[:, 1:]
+        y_hat = y_hat.transpose(0, 1)
+        y_hat = y_hat[:, :y.size()[1], :]
+        for i, fname in enumerate(f_names_tmp):
+            soft_targets[fname] = y_hat
+    return soft_targets
 
 
 def module_forward_passing(data: MutableSequence[Tensor],

@@ -45,7 +45,6 @@ def _clotho_collate_fn(batch: MutableSequence[ndarray]) \
 
     input_features = batch[0][0][0][0].shape[-1]
     eos_token = batch[0][1][0][0][-1]
-
     input_tensor = cat([cat([zeros(max_input_t_steps - i.shape[0], input_features).float(),
                              from_numpy(i).float()]).unsqueeze(0) for iii in batch
                         for ii in iii[0] for i in ii])

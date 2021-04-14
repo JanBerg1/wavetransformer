@@ -6,7 +6,7 @@
 # affiliation: Tampere University
 # =================================
 workflow:
-  dnn_training: Yes
+  dnn_training: No
   dnn_evaluation: Yes
 # ---------------------------------
 dnn_training_settings: !include method_ht_12_16_3.yaml

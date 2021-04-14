@@ -134,7 +134,7 @@ def evaluate_metrics_from_lists(predictions: List[str],
     :rtype: tuple[dict[str, float], dict[int, dict[str, float]]]
     """
     assert(len(predictions) == len(ground_truths))
-    assert(all([len(i) == 5 for i in ground_truths]))
+    assert(all([len(i) == 1 for i in ground_truths]))
 
     # Running int for id if not given
     if ids is None:
@@ -156,8 +156,8 @@ def evaluate_metrics_from_lists(predictions: List[str],
 
     unique_id = f'{random.randint(0, 1e6)}_{datetime.now()}'
 
-    ref_file = tmp_dir.joinpath(f'{unique_id}_ref.json')
-    pred_file = tmp_dir.joinpath(f'{unique_id}_pred.json')
+    ref_file = tmp_dir.joinpath('1.json')
+    pred_file = tmp_dir.joinpath('1_pred.json')
 
     write_json(ref, ref_file)
     write_json(pred, pred_file)
@@ -238,7 +238,7 @@ def combine_single_and_per_file_metrics(single_metrics: Dict[str, float],
 
 def evaluate_metrics(prediction_file: Union[str, Path, List[Dict[str, str]]],
                      reference_file: Union[str, Path, List[Dict[str, str]]],
-                     nb_reference_captions: int = 5) \
+                     nb_reference_captions: int = 1) \
         -> Dict[str, Dict[str, Union[float, Dict[str, float]]]]:
     """ Evaluates metrics from the predictions and reference captions.
 

@@ -16,7 +16,7 @@ from loguru import logger
 import torch
 from tools import file_io, printing
 from tools.argument_parsing import get_argument_parser
-from tools.model import module_epoch_passing, get_model,\
+from tools.model import module_distill_pass,module_epoch_passing, get_model,\
     get_device
 from data_handlers.clotho_loader import get_clotho_loader
 from eval_metrics import evaluate_metrics
@@ -193,7 +193,10 @@ def _do_evaluation(model: Module,
         print_to_console=False)
 
     logger_main.info('Evaluation done')
-
+    
+    logger_main.info(captions_pred)
+    logger_main.info(captions_gt)
+    
     metrics = evaluate_metrics(captions_pred, captions_gt)
 
     for metric, values in metrics.items():
@@ -288,10 +291,31 @@ def _do_training(model: Module,
 
     # objective = CrossEntropyLoss(weight=frequencies_tensor)
     objective = CrossEntropyLoss()
+    dist_obj = KLDivLoss(reduction='batchmean')
     optimizer = Adam(params=model.parameters(),
                      lr=settings_training['optimizer']['lr'])
     # Inform that we start training
     logger_main.info('Starting training')
+    
+    soft_targets = {}
+    distill = True
+    
+    if distill:
+        model = model.eval()
+        with no_grad():
+            soft_targets = module_distill_pass(data=training_data,
+                        module=model)
+        #
+         #   epoch_output_v = module_epoch_passing(
+          #      data=training_data,
+           #     module=model,
+            #    objective=None,
+             #   optimizer=None)
+            #objective_output_v, output_y_hat_v, output_y_v, f_names_v, dist_objective_output = epoch_output_v
+            
+            #for i, fname in enumerate(f_names_v):
+             #   soft_targets[fname] = output_y_hat_v[i]
+            #logger_main.info(type(soft_targets))
 
     for epoch in range(settings_training['nb_epochs']):
 
@@ -307,12 +331,15 @@ def _do_training(model: Module,
             optimizer=optimizer,
             use_y=settings_training['use_y'],
             grad_norm=settings_training['grad_norm']['norm'],
-            grad_norm_val=settings_training['grad_norm']['value'])
-        objective_output, output_y_hat, output_y, f_names = epoch_output
+            grad_norm_val=settings_training['grad_norm']['value'],
+            soft_targets=soft_targets,
+            dist_obj=dist_obj)
+        objective_output, output_y_hat, output_y, f_names, dist_objective_output = epoch_output
 
         # Get mean loss of training and print it with logger
         training_loss = objective_output.mean().item()
-
+        training_dist_loss = dist_objective_output.mean().item()
+        
         if settings_data['use_validation_split']:
             # Do a complete pass over our validation data
             model = model.eval()
@@ -366,7 +393,7 @@ def _do_training(model: Module,
         else:
             metric_str = ""
         logger_main.info(f'Epoch: {epoch:05d} -- '
-                         f'Loss (Tr/Va) : {training_loss:>7.4f}/{val_loss_str} | '
+                         f'Loss (Tr/Va) : {training_loss:>7.4f}/{val_loss_str}/{training_dist_loss:>7.4f}  | '
                          f'{metric_str}Time: {time() - start_time:>5.3f}')
         # logger_main.info("Logging memory usage")
 

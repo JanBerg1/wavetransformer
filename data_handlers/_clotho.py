@@ -8,6 +8,8 @@ from itertools import groupby
 from torch.utils.data import Dataset
 from numpy import load as np_load, ndarray
 
+from loguru import logger
+
 __author__ = 'Konstantinos Drossos -- Tampere University'
 __docformat__ = 'reStructuredText'
 __all__ = ['ClothoDataset']
@@ -57,7 +59,6 @@ class ClothoDataset(Dataset):
         """
         super(ClothoDataset, self).__init__()
         the_dir = data_dir.joinpath(split)
-
         self.multiple_captions_mode = multiple_captions_mode
 
         self.examples: List[Path] = sorted([
@@ -116,12 +117,15 @@ class ClothoDataset(Dataset):
 
         if not self.load_into_memory:
             ex = [np_load(str(i), allow_pickle=True) for i in ex]
-
+        
         x, y, file_names = [], [], []
+        
+
         for ex_i in ex:
+            file_names.append(Path(ex_i.file_name[0]))
             x.append(ex_i[self.input_name])
             y.append(ex_i[self.output_name])
-            file_names.append(Path(ex_i.file_name[0]))
+            
         return x, y, file_names
 
 # EOF

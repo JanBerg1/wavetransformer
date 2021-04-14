@@ -34,4 +34,5 @@ class Transformer(Module):
 
         for i in range(self.num_layers):
             y = self.layers[i](y, encoder_output, attention_mask, s_mask)
+        
         return self.norm(y)
