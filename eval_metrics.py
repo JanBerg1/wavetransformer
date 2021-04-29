@@ -156,8 +156,8 @@ def evaluate_metrics_from_lists(predictions: List[str],
 
     unique_id = f'{random.randint(0, 1e6)}_{datetime.now()}'
 
-    ref_file = tmp_dir.joinpath('1.json')
-    pred_file = tmp_dir.joinpath('1_pred.json')
+    ref_file = tmp_dir.joinpath('{unique_id}.json')
+    pred_file = tmp_dir.joinpath('{unique_id}_pred.json')
 
     write_json(ref, ref_file)
     write_json(pred, pred_file)

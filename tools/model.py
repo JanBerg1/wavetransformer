@@ -11,6 +11,7 @@ import torch
 from torch import cuda, zeros, Tensor, load as pt_load
 from torch.nn import Module
 from torch.nn.utils import clip_grad_norm_
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import CosineAnnealingLR 
@@ -154,32 +155,46 @@ def module_epoch_passing(data: DataLoader,
                 objective_output[i] = loss.item()
                 if soft_targets:
                     # Add this value to settings
+                    eos = y_hat[0][y_hat.size()[1]-1]
                     x = 0.5
-                    st = [soft_targets[x] for x in f_names_tmp]
-                    st = torch.stack(st)
-                    st = st.cuda()
-                    st = st.view(-1, st.size()[2],st.size()[3])
+                    st = [soft_targets[Path(x).name] for x in f_names_tmp]
+                    st = pad_sequence(st, batch_first=True)
+                    #st = st.view(-1, st.size()[2],st.size()[3])
                     y_hat = torch.clone(y_hat)
-                    if(st.size() != y_hat.size()):
-                        if(st.size()[1] > y_hat.size()[1]):
-                            target = torch.zeros_like(st)
-                            target = torch.clamp(target,min=1e-4)
-                            target[:, :y_hat.size()[1], :] = y_hat
-                            y_hat = target
-                               # y_hat = y_hat[:, :st.size()[1], :]
-                        else:
-                            target = torch.zeros_like(y_hat)
-                            target = torch.clamp(target,min=1e-4)
-                            target[:, :st.size()[1], :] = st
-                            st = target
-                            
-                             #   st = st[:, :y_hat.size()[1], :]
+                    
+                    st = list(torch.unbind(st))
+                    
+                    y_hat = list(torch.unbind(y_hat))
+                    #st = st.reshape(-1, st.size()[2])
+                    #print(st.shape)
+                    
+                    
+                    #y_hat = y_hat.reshape(-1, y_hat.size()[2])  
+                    #print(y_hat.shape)
+                    st = pad_sequence(st + y_hat, batch_first=True)
+                   
+                    #st = st.reshape(st.size(0)*2, -1, st.size()[2])
+                                                                
+                    summed = torch.sum(st, dim=2)                    
+                    idx = torch.nonzero((summed == 0))
+                    
+                    if idx is not None:
+                        st[idx[:,0],idx[:,1],9] = 10
+                    st = st.cuda()
+
+                    st = torch.split(st, st.size()[0] // 2)
+                    
+                    y_hat = st[1]
+                    st = st[0]
+                    
                     softmax = torch.nn.LogSoftmax(dim=2)
-                    y_hat = softmax(y_hat/2)
+                    torch.clamp(y_hat,min=1e-4)
+                    y_hat = softmax(y_hat / 2)
                     st = torch.clamp(st,min=1e-4)
-                    #st = softmax(st)
+                    #st = softmax(st/2)
                     softmax2 = torch.nn.Softmax(dim=2)
                     st = softmax2(st/2)
+                    
                     #st = st/2
                     dist_loss = dist_obj(y_hat,st)
                     dist_objective_output[i] = dist_loss.item()
@@ -221,7 +236,7 @@ def module_distill_pass(data: DataLoader,
         y_hat = y_hat.transpose(0, 1)
         y_hat = y_hat[:, :y.size()[1], :]
         for i, fname in enumerate(f_names_tmp):
-            soft_targets[fname] = y_hat
+            soft_targets[Path(fname).name] = y_hat[i, :, :]
     return soft_targets
 
 

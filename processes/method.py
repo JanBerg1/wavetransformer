@@ -183,6 +183,7 @@ def _do_evaluation(model: Module,
             data=validation_data, module=model,
             use_y=False,
             objective=None, optimizer=None)
+        print(evaluation_outputs)
 
     captions_pred, captions_gt = _decode_outputs(
         evaluation_outputs[1],
@@ -257,6 +258,8 @@ def _do_training(model: Module,
         settings_data=settings_data,
         settings_io=settings_io)
 
+    # Split määrittää myös kansion myöhemmässä vaiheessa! Eli tässä tapauksessa
+    # "validation" -> data_splits/validation
     logger_main.info('Getting validation data')
     validation_data = get_clotho_loader(
         'validation',
@@ -350,11 +353,11 @@ def _do_training(model: Module,
                     objective=None,
                     optimizer=None,
                 )
-            objective_output_v, output_y_hat_v, output_y_v, f_names_v = epoch_output_v
+            objective_output_v, output_y_hat_v, output_y_v, f_names_v, dist_objective_output_v = epoch_output_v
 
             # Get mean loss of training and print it with logger
             validation_metric = objective_output_v.mean().item()
-            # val_loss_str = f'{validation_metric:>7.4f}'
+            #val_loss_str = f'{validation_metric:>7.4f}'
             val_loss_str = '--'
             early_stopping_dif = validation_metric - prv_validation_metric
         else:

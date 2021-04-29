@@ -87,6 +87,7 @@ def get_clotho_loader(split: str,
             settings_io['root_dirs']['data'],
             settings_io['dataset']['pickle_files_dir'],
             settings_io['dataset']['files']['validation_files_file_name'])
+        
         validation_files_path = load_pickle_file(validation_files_path)
         validation_files = [Path(i) for i in validation_files_path]
     else:
