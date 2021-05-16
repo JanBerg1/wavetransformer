@@ -155,48 +155,69 @@ def module_epoch_passing(data: DataLoader,
                 objective_output[i] = loss.item()
                 if soft_targets:
                     # Add this value to settings
-                    eos = y_hat[0][y_hat.size()[1]-1]
+                    #eos = y_hat[0][y_hat.size()[1]-1]
                     x = 0.5
                     st = [soft_targets[Path(x).name] for x in f_names_tmp]
-                    st = pad_sequence(st, batch_first=True)
-                    #st = st.view(-1, st.size()[2],st.size()[3])
+                    #st = pad_sequence(st, batch_first=True)
                     y_hat = torch.clone(y_hat)
                     
-                    st = list(torch.unbind(st))
+                    #st = list(torch.unbind(st))
                     
-                    y_hat = list(torch.unbind(y_hat))
-                    #st = st.reshape(-1, st.size()[2])
-                    #print(st.shape)
+                    #y_hat = list(torch.unbind(y_hat))
                     
                     
-                    #y_hat = y_hat.reshape(-1, y_hat.size()[2])  
-                    #print(y_hat.shape)
-                    st = pad_sequence(st + y_hat, batch_first=True)
-                   
-                    #st = st.reshape(st.size(0)*2, -1, st.size()[2])
-                                                                
-                    summed = torch.sum(st, dim=2)                    
-                    idx = torch.nonzero((summed == 0))
                     
-                    if idx is not None:
-                        st[idx[:,0],idx[:,1],9] = 10
-                    st = st.cuda()
+                    #PAD ZEROES COMMENTED OUT
+                    #st = pad_sequence(st + y_hat, batch_first=True)
+                                                               
+                    #summed = torch.sum(st, dim=2)                    
+                    #idx = torch.nonzero((summed == 0))
+                    
+                    #if idx is not None:
+                     #   st[idx[:,0],idx[:,1],9] = 10
+                    #st = st.cuda()
 
-                    st = torch.split(st, st.size()[0] // 2)
+                    #st = torch.split(st, st.size()[0] // 2)
                     
-                    y_hat = st[1]
-                    st = st[0]
+                    #y_hat = st[1]
+                    #st = st[0]
                     
-                    softmax = torch.nn.LogSoftmax(dim=2)
-                    torch.clamp(y_hat,min=1e-4)
-                    y_hat = softmax(y_hat / 2)
-                    st = torch.clamp(st,min=1e-4)
-                    #st = softmax(st/2)
-                    softmax2 = torch.nn.Softmax(dim=2)
-                    st = softmax2(st/2)
+                    dist_loss = 0
                     
+                    for idx, target in enumerate(st):
+                        eos = False
+                        eos_count = 0
+                        #print(torch.argmax(target[target.size()[0]-1]).item())
+                        while not eos:
+                            if torch.argmax(target[target.size()[0] - 2]).item() == 9:
+                                target = target[:target.size()[0] - 1, :]
+                            else:    
+                                eos = True
+                        y_hat_t = y_hat[idx]
+                        y_hat_t = y_hat_t[:target.size()[0],:]
+                        print(torch.argmax(y_hat_t[y_hat_t.size()[0]-1]).item())
+                        if y_hat_t.size()[0] < target.size()[0]:
+                            target = pad_sequence([target, y_hat_t], batch_first=True)
+                            summed = torch.sum(target, dim=2)                    
+                            idx = torch.nonzero((summed == 0))
+                    
+                            if idx is not None:
+                               target[idx[:,0],idx[:,1],9] = 1
+                            
+                            target = target.split(target, target.size()[0] // 2)
+                            y_hat_t = target[1]
+                            target = target[0]
+                        
+                        softmax = torch.nn.LogSoftmax(dim=1)
+                        torch.clamp(y_hat_t,min=1e-4)
+                        y_hat_t = softmax(y_hat_t / 2)
+                        target = torch.clamp(target,min=1e-4)
+                        softmax2 = torch.nn.Softmax(dim=1)
+                        target = softmax2(target/2)
+                        dist_loss = dist_loss + dist_obj(y_hat_t, target)
+                        
                     #st = st/2
-                    dist_loss = dist_obj(y_hat,st)
+                    #dist_loss = dist_obj(y_hat,st)
                     dist_objective_output[i] = dist_loss.item()
                     loss = (1-x)*loss + x*dist_loss
                     #loss = loss
@@ -234,7 +255,7 @@ def module_distill_pass(data: DataLoader,
         y_hat, y, f_names_tmp = module_forward_passing(example, module, use_y)
         y = y[:, 1:]
         y_hat = y_hat.transpose(0, 1)
-        y_hat = y_hat[:, :y.size()[1], :]
+        #y_hat = y_hat[:, :y.size()[1], :]
         for i, fname in enumerate(f_names_tmp):
             soft_targets[Path(fname).name] = y_hat[i, :, :]
     return soft_targets
