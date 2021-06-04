@@ -90,6 +90,7 @@ def get_clotho_loader(split: str,
         
         validation_files_path = load_pickle_file(validation_files_path)
         validation_files = [Path(i) for i in validation_files_path]
+
     else:
         validation_files = None
 

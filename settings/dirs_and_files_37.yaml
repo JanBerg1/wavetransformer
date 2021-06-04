@@ -17,6 +17,7 @@ dataset:
     development: *dev
     evaluation: *eva
     validation: *val
+    secondary_evaluation: 'secondary_evaluation'
   audio_dirs:
     downloaded: 'clotho_audio_files'
     output: 'data_splits_audio'

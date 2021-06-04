@@ -6,9 +6,9 @@ from typing import Tuple, MutableSequence, \
 from platform import processor
 from pathlib import Path
 from collections import OrderedDict
-
+import os, psutil
 import torch
-from torch import cuda, zeros, Tensor, load as pt_load
+from torch import cuda, zeros, no_grad, Tensor, load as pt_load
 from torch.nn import Module
 from torch.nn.utils import clip_grad_norm_
 from torch.nn.utils.rnn import pad_sequence
@@ -99,7 +99,8 @@ def module_epoch_passing(data: DataLoader,
                          use_y: Optional[bool] = False,
                          grad_norm: Optional[int] = 1,
                          grad_norm_val: Optional[float] = -1.,
-                         soft_targets: dict = None,
+                         #soft_targets: dict = None,
+                         model_orig: Module = None,
                          dist_obj: Union[Callable[[Tensor, Tensor], Tensor], None] = None) \
         -> Tuple[Tensor, List[Tensor], List[Tensor], List[str], Tensor]:
     """One full epoch passing.
@@ -128,16 +129,28 @@ def module_epoch_passing(data: DataLoader,
     
     # OBJECTIVE TYYPPIÄ CROSS ENTROPY (LOSS)
     
+    #process = psutil.Process(os.getpid())
+   # print(process.memory_info().rss)
+    
     has_optimizer = optimizer is not None
     objective_output: Tensor = zeros(len(data))
     dist_objective_output: Tensor = zeros(len(data))
     output_y_hat = []
     output_y = []
     f_names = []
+    #model_orig.eval()
+ 
 
     for i, example in enumerate(data):
+        #print("start of epoch:")
+        #print(torch.cuda.memory_stats(device=None)["allocated_bytes.all.current"])
+        #process = psutil.Process(os.getpid())
+        #print(process.memory_info().rss)
         y_hat, y, f_names_tmp = module_forward_passing(example, module, use_y)
         f_names.extend(f_names_tmp)
+        #print("after pass")
+        #print(process.memory_info().rss)
+        #print(torch.cuda.memory_stats(device=None)["allocated_bytes.all.current"])
         y = y[:, 1:]
         y_hat = y_hat.transpose(0, 1)
         if not use_y:  # inference
@@ -146,20 +159,27 @@ def module_epoch_passing(data: DataLoader,
            
 
         try:
-            with torch.autograd.set_detect_anomaly(True):
+            #with torch.autograd.set_detect_anomaly(True):
                 if use_y:
     
                     y_hat = y_hat[:, :y.size()[1], :]
                 loss = objective(y_hat.contiguous().view(-1, y_hat.size()[-1]),
                                 y.contiguous().view(-1))
                 objective_output[i] = loss.item()
-                if soft_targets:
+                #if soft_targets:
+                if model_orig:
+                    
+                    with no_grad():
+                        y_hat0,y0,f_names_tmp0 = module_forward_passing(example, model_orig, use_y)
+                    y0 = y0[:, 1:]
+                    y_hat0 = y_hat0.transpose(0, 1)
                     # Add this value to settings
                     #eos = y_hat[0][y_hat.size()[1]-1]
                     x = 0.5
-                    st = [soft_targets[Path(x).name] for x in f_names_tmp]
+                    #st = [soft_targets[Path(x).name] for x in f_names_tmp]
+                    #st = y_hat0
                     #st = pad_sequence(st, batch_first=True)
-                    y_hat = torch.clone(y_hat)
+                    #y_hat = torch.clone(y_hat)
                     
                     #st = list(torch.unbind(st))
                     
@@ -184,10 +204,10 @@ def module_epoch_passing(data: DataLoader,
                     
                     dist_loss = 0
                     
-                    for idx, target in enumerate(st):
+                    for idx, target in enumerate(y_hat0):
                         eos = False
                         eos_count = 0
-                        #print(torch.argmax(target[target.size()[0]-1]).item())
+                        #print(torch.argmax(target[target.size()[0]-1]).item())         
                         while not eos:
                             if torch.argmax(target[target.size()[0] - 2]).item() == 9:
                                 target = target[:target.size()[0] - 1, :]
@@ -195,7 +215,7 @@ def module_epoch_passing(data: DataLoader,
                                 eos = True
                         y_hat_t = y_hat[idx]
                         y_hat_t = y_hat_t[:target.size()[0],:]
-                        print(torch.argmax(y_hat_t[y_hat_t.size()[0]-1]).item())
+                        #print(torch.argmax(y_hat_t[y_hat_t.size()[0]-1]).item())
                         if y_hat_t.size()[0] < target.size()[0]:
                             target = pad_sequence([target, y_hat_t], batch_first=True)
                             summed = torch.sum(target, dim=2)                    
@@ -215,21 +235,25 @@ def module_epoch_passing(data: DataLoader,
                         softmax2 = torch.nn.Softmax(dim=1)
                         target = softmax2(target/2)
                         dist_loss = dist_loss + dist_obj(y_hat_t, target)
+                        print(dist_loss)
                         
                     #st = st/2
                     #dist_loss = dist_obj(y_hat,st)
-                    dist_objective_output[i] = dist_loss.item()
+                    dist_loss = dist_loss / len(example)
+                    dist_objective_output[i] = dist_loss.item() 
                     loss = (1-x)*loss + x*dist_loss
                     #loss = loss
-                
+                    
                 if has_optimizer:
                     optimizer.zero_grad()
                     if grad_norm_val > -1:
                         clip_grad_norm_(module.parameters(),
                                             max_norm=grad_norm_val,
                                             norm_type=grad_norm)
-                    loss.backward(retain_graph=True)
+                    loss.backward()
                     optimizer.step()
+                    
+                    
                         # scheduler.step()
                         # plot_grad_flow(module.named_parameters())
     
@@ -244,6 +268,151 @@ def module_epoch_passing(data: DataLoader,
             pass
         except TypeError:
             pass
+    #process = psutil.Process(os.getpid())
+    #print(process.memory_info().rss)
+    return objective_output, output_y_hat, output_y, f_names, dist_objective_output
+
+def module_batch_passing(example: List,
+                         module: Module,
+                         objective: Union[Callable[[Tensor, Tensor], Tensor], None],
+                         optimizer: Union[Optimizer, None],
+                         use_y: Optional[bool] = False,
+                         grad_norm: Optional[int] = 1,
+                         grad_norm_val: Optional[float] = -1.,
+                         #soft_targets: dict = None,
+                         model_orig: Module = None,
+                         dist_obj: Union[Callable[[Tensor, Tensor], Tensor], None] = None) \
+        -> Tuple[Tensor, List[Tensor], List[Tensor], List[str], Tensor]:
+    """One full epoch passing.
+
+    :param data: Data of the epoch.
+    :type data: torch.utils.data.DataLoader
+    :param module: Module to use.
+    :type module: torch.nn.Module
+    :param objective: Objective for the module.
+    :type objective: callable|None
+    :param optimizer: Optimizer for the module.
+    :type optimizer: torch.optim.Optimizer | None
+    :param use_y: Return the predictions and\
+                  ground truth values? Defaults to False.
+    :type use_y: bool
+    :param grad_norm: Norm of the gradient for gradient clipping.
+                      Defaults to 1. .
+    :type grad_norm: int
+    :param grad_norm_val: Max value for gradient clipping. If -1, then\
+                          no clipping will happen. Defaults to -1. .
+    :type grad_norm_val: float
+    :return: Predicted and ground truth values\
+             (if specified).
+    :rtype: torch.Tensor, list[torch.Tensor], list[torch.Tensor], list[str]
+    """
+    
+    # OBJECTIVE TYYPPIÄ CROSS ENTROPY (LOSS)
+    
+    #process = psutil.Process(os.getpid())
+   # print(process.memory_info().rss)
+    
+    has_optimizer = optimizer is not None
+    objective_output: Tensor = zeros(1)
+    dist_objective_output: Tensor = zeros(1)
+    output_y_hat = []
+    output_y = []
+    f_names = []
+    #model_orig.eval()
+ 
+    #print("start of epoch:")
+    #print(torch.cuda.memory_stats(device=None)["allocated_bytes.all.current"])
+    #process = psutil.Process(os.getpid())
+    #print(process.memory_info().rss)
+    y_hat, y, f_names_tmp = module_forward_passing(example, module, use_y)
+    f_names.extend(f_names_tmp)
+    #print("after pass")
+    #print(process.memory_info().rss)
+    #print(torch.cuda.memory_stats(device=None)["allocated_bytes.all.current"])
+    y = y[:, 1:]
+    y_hat = y_hat.transpose(0, 1)
+    if not use_y:  # inference       
+        y_hat = y_hat[:, 1:]
+           
+
+    try:
+        if use_y:
+
+            y_hat = y_hat[:, :y.size()[1], :]
+        loss = objective(y_hat.contiguous().view(-1, y_hat.size()[-1]),
+                        y.contiguous().view(-1))
+        objective_output[0] = loss.item()
+
+        if model_orig:
+            
+            with no_grad():
+                y_hat0,y0,f_names_tmp0 = module_forward_passing(example, model_orig, use_y)
+            y0 = y0[:, 1:]
+            y_hat0 = y_hat0.transpose(0, 1)
+            x = 0.5
+ 
+            dist_loss = 0
+            
+            for idx, target in enumerate(y_hat0):
+                eos = False
+                eos_count = 0
+                #print(torch.argmax(target[target.size()[0]-1]).item())         
+                while not eos:
+                    if torch.argmax(target[target.size()[0] - 2]).item() == 9:
+                        target = target[:target.size()[0] - 1, :]
+                    else:    
+                        eos = True
+                y_hat_t = y_hat[idx]
+                y_hat_t = y_hat_t[:target.size()[0],:]
+                #print(torch.argmax(y_hat_t[y_hat_t.size()[0]-1]).item())
+                if y_hat_t.size()[0] < target.size()[0]:
+                    target = pad_sequence([target, y_hat_t], batch_first=True)
+                    # Sum tesors to find padded tensors (sum = 0)
+                    summed = torch.sum(target, dim=2)                    
+                    idx = torch.nonzero((summed == 0))
+            
+                    if idx is not None:
+                       # Replace ninth index (<eos>) with 1, so it correctly corresponds to <eos> token
+                       target[idx[:,0],idx[:,1],9] = 1
+                    
+                    target = target.split(target, target.size()[0] // 2)
+                    y_hat_t = target[1]
+                    target = target[0]
+                
+                softmax = torch.nn.LogSoftmax(dim=1)
+                torch.clamp(y_hat_t,min=1e-4)
+                y_hat_t = softmax(y_hat_t / 2)
+                target = torch.clamp(target,min=1e-4)
+                softmax2 = torch.nn.Softmax(dim=1)
+                target = softmax2(target/2)
+                dist_loss = dist_loss + dist_obj(y_hat_t, target)
+                
+            dist_loss = dist_loss / len(y_hat0)
+            dist_objective_output[0] = dist_loss.item()
+            loss = (1-x)*loss + x*dist_loss
+
+                    
+        if has_optimizer:
+            optimizer.zero_grad()
+            if grad_norm_val > -1:
+                clip_grad_norm_(module.parameters(),
+                                    max_norm=grad_norm_val,
+                                    norm_type=grad_norm)
+            loss.backward()
+            optimizer.step()
+
+    except TypeError:
+        pass
+    try:
+        output_y_hat.extend(y_hat.detach().cpu())
+        output_y.extend(y.detach().cpu())
+        torch.cuda.empty_cache()
+    except AttributeError:
+        pass
+    except TypeError:
+        pass
+    #process = psutil.Process(os.getpid())
+    #print(process.memory_info().rss)
     return objective_output, output_y_hat, output_y, f_names, dist_objective_output
 
 def module_distill_pass(data: DataLoader,

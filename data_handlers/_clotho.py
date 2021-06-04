@@ -24,7 +24,8 @@ def _get_audio_file_name(s: Path) \
     :return: Original audio file name.
     :rtype: str
     """
-    return s.stem.split('clotho_file_')[-1].split('.wav')[0]
+    #return s.stem.split('clotho_file_')[-1].split('.wav')[0]
+    return s.stem.split('.wav')[0]
 
 
 class ClothoDataset(Dataset):
@@ -67,7 +68,6 @@ class ClothoDataset(Dataset):
         if split.lower() in ['development', 'validation']:
             validation_stems = [] if validation_files is None \
                 else [v_i.stem for v_i in validation_files]
-
             self.examples = [s_i for s_i in self.examples
                              if (_get_audio_file_name(s_i) in validation_stems) or
                              (split.lower() == 'development')]
@@ -125,6 +125,7 @@ class ClothoDataset(Dataset):
             file_names.append(Path(ex_i.file_name[0]))
             x.append(ex_i[self.input_name])
             y.append(ex_i[self.output_name])
+            
             
         return x, y, file_names
 
