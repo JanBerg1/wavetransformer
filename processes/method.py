@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
+import gc
 import os, psutil
 from pathlib import Path
 import pickle
@@ -336,109 +338,109 @@ def _do_training(model: Module,
             #logger_main.info(type(soft_targets))
 
     for epoch in range(settings_training['nb_epochs']):
-        for i, training_data_ex in enumerate(training_data):
+       for i, training_data_ex in enumerate(training_data):
     
-            # Log starting time
-            start_time = time()
-    
-            model = model.train()
-            # Do a complete pass over our training data
-            
-            #epoch_output = module_epoch_passing(
-            epoch_output = module_batch_passing(
-                example=training_data_ex,
-                module=model,
-                objective=objective,
-                optimizer=optimizer,
-                use_y=settings_training['use_y'],
-                grad_norm=settings_training['grad_norm']['norm'],
-                grad_norm_val=settings_training['grad_norm']['value'],
-                #soft_targets=soft_targets,
-                model_orig=model_orig,
-                dist_obj=dist_obj)
-            objective_output, output_y_hat, output_y, f_names, dist_objective_output = epoch_output
-    
+        # Log starting time
+        start_time = time()
+
+        model = model.train()
+        # Do a complete pass over our training data
+        
+        #epoch_output = module_epoch_passing(
+        epoch_output = module_batch_passing(
+            example=training_data_ex,
+            module=model,
+            objective=objective,
+            optimizer=optimizer,
+            use_y=settings_training['use_y'],
+            grad_norm=settings_training['grad_norm']['norm'],
+            grad_norm_val=settings_training['grad_norm']['value'],
+            #soft_targets=soft_targets,
+            model_orig=model_orig,
+            dist_obj=dist_obj)
+        objective_output, output_y_hat, output_y, f_names, dist_objective_output = epoch_output
+        # Get mean loss of training and print it with logger
+        training_loss = objective_output.mean().item()
+        training_dist_loss = dist_objective_output.mean().item()
+        
+        if settings_data['use_validation_split']:
+            # Do a complete pass over our validation data
+            model = model.eval()
+            with no_grad():
+                epoch_output_v = module_epoch_passing(
+                    data=validation_data,
+                    module=model,
+                    objective=None,
+                    optimizer=None,
+                )
+            objective_output_v, output_y_hat_v, output_y_v, f_names_v, dist_objective_output_v = epoch_output_v
+
             # Get mean loss of training and print it with logger
-            training_loss = objective_output.mean().item()
-            training_dist_loss = dist_objective_output.mean().item()
-            
-            if settings_data['use_validation_split']:
-                # Do a complete pass over our validation data
-                model = model.eval()
-                with no_grad():
-                    epoch_output_v = module_epoch_passing(
-                        data=validation_data,
-                        module=model,
-                        objective=None,
-                        optimizer=None,
-                    )
-                objective_output_v, output_y_hat_v, output_y_v, f_names_v, dist_objective_output_v = epoch_output_v
-    
-                # Get mean loss of training and print it with logger
-                validation_metric = objective_output_v.mean().item()
-                #val_loss_str = f'{validation_metric:>7.4f}'
-                val_loss_str = '--'
-                early_stopping_dif = validation_metric - prv_validation_metric
+            validation_metric = objective_output_v.mean().item()
+            #val_loss_str = f'{validation_metric:>7.4f}'
+            val_loss_str = '--'
+            early_stopping_dif = validation_metric - prv_validation_metric
+        else:
+            validation_metric = training_loss
+            val_loss_str = '--'
+            early_stopping_dif = prv_validation_metric - validation_metric
+
+        if settings_data['use_validation_split']:
+            # Check if we have to decode captions for the current epoch
+            do_captions_decoding = divmod(
+                epoch, settings_training['text_output_every_nb_epochs'])[-1] == 0
+
+            if do_captions_decoding:
+                log_captions = True
             else:
-                validation_metric = training_loss
-                val_loss_str = '--'
-                early_stopping_dif = prv_validation_metric - validation_metric
-    
-            if settings_data['use_validation_split']:
-                # Check if we have to decode captions for the current epoch
-                do_captions_decoding = divmod(
-                    epoch, settings_training['text_output_every_nb_epochs'])[-1] == 0
-    
-                if do_captions_decoding:
-                    log_captions = True
-                else:
-                    log_captions = False
-    
-                    # Do the decoding
-                captions_pred, captions_gt = _decode_outputs(
-                    output_y_hat_v, output_y_v,
-                    indices_object=indices_list,
-                    file_names=[Path(i) for i in f_names_v],
-                    eos_token='<eos>',
-                    print_to_console=False)
-    
-                metrics = evaluate_metrics(captions_pred, captions_gt)
-                metric_str = f'Spider: {metrics["spider"]["score"]:>7.4f} | '
-    
-                if do_captions_decoding:
-                    for metric, values in metrics.items():
-                        logger_main.info(f'{metric:<7s}: {values["score"]:7.4f}')
-                    logger_main.info('Calculation of metrics done')
-    
-                validation_metric = metrics['spider']['score']
-                early_stopping_dif = validation_metric - prv_validation_metric
-            else:
-                metric_str = ""
+                log_captions = False
+
+                # Do the decoding
+            captions_pred, captions_gt = _decode_outputs(
+                output_y_hat_v, output_y_v,
+                indices_object=indices_list,
+                file_names=[Path(i) for i in f_names_v],
+                eos_token='<eos>',
+                print_to_console=False)
             
-            ## ADDED EVALUATION AFTER EACH BATCH
-            
-            logger_inner.info('Starting evaluation')
-            _do_evaluation(
-                model=model,
-                settings_data=settings['dnn_training_settings']['data'],
-                settings_io=settings['dirs_and_files'],
-                indices_list=indices_list)
-            logger_inner.info('Evaluation done')
-            
-            
-            logger_inner.info('Starting evaluation')
-            _do_evaluation(
-                model=model,
-                settings_data=settings['dnn_training_settings']['data'],
-                settings_io=settings['dirs_and_files'],
-                indices_list=indices_list,
-                eva_secondary=True)
-            logger_inner.info('Evaluation done')
-            
-            logger_main.info(f'Epoch: {epoch:05d} -- '
-                             f'Loss (Tr/Va) : {training_loss:>7.4f}/{val_loss_str}/{training_dist_loss:>7.4f}  | '
-                             f'{metric_str}Time: {time() - start_time:>5.3f}')
-            # logger_main.info("Logging memory usage")
+
+            metrics = evaluate_metrics(captions_pred, captions_gt)
+            metric_str = f'Spider: {metrics["spider"]["score"]:>7.4f} | '
+
+            if do_captions_decoding:
+                for metric, values in metrics.items():
+                    logger_main.info(f'{metric:<7s}: {values["score"]:7.4f}')
+                logger_main.info('Calculation of metrics done')
+
+            validation_metric = metrics['spider']['score']
+            early_stopping_dif = validation_metric - prv_validation_metric
+        else:
+            metric_str = ""
+        
+        ## ADDED EVALUATION AFTER EACH BATCH
+        
+        #logger_inner.info('Starting evaluation')
+        #_do_evaluation(
+        #    model=model,
+        #    settings_data=settings['dnn_training_settings']['data'],
+        #    settings_io=settings['dirs_and_files'],
+        #    indices_list=indices_list)
+        #logger_inner.info('Evaluation done')
+        
+        
+        #logger_inner.info('Starting evaluation')
+        #_do_evaluation(
+        #    model=model,
+        #    settings_data=settings['dnn_training_settings']['data'],
+        #    settings_io=settings['dirs_and_files'],
+        #    indices_list=indices_list,
+        #    eva_secondary=True)
+        #logger_inner.info('Evaluation done')
+        
+        logger_main.info(f'Epoch: {epoch:05d} -- '
+                         f'Loss (Tr/Va) : {training_loss:>7.4f}/{val_loss_str}/{training_dist_loss:>7.4f}  | '
+                         f'{metric_str}Time: {time() - start_time:>5.3f}')
+        # logger_main.info("Logging memory usage")
            
            
         # Check improvement of loss

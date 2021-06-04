@@ -16,6 +16,9 @@ from torch.utils.data import DataLoader
 from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import CosineAnnealingLR 
 from models import WaveTransformer3, WaveTransformer8, WaveTransformer10
+
+from memory_profiler import profile
+
 __author__ = 'Konstantinos Drossos -- Tampere University'
 __docformat__ = 'reStructuredText'
 __all__ = ['get_device', 'get_model',
@@ -91,7 +94,7 @@ def get_model(settings_model: MutableMapping[str, Union[str, MutableMapping]],
 
     return model
 
-
+@profile
 def module_epoch_passing(data: DataLoader,
                          module: Module,
                          objective: Union[Callable[[Tensor, Tensor], Tensor], None],
@@ -144,8 +147,8 @@ def module_epoch_passing(data: DataLoader,
     for i, example in enumerate(data):
         #print("start of epoch:")
         #print(torch.cuda.memory_stats(device=None)["allocated_bytes.all.current"])
-        #process = psutil.Process(os.getpid())
-        #print(process.memory_info().rss)
+        process = psutil.Process(os.getpid())
+        print(process.memory_info().rss)
         y_hat, y, f_names_tmp = module_forward_passing(example, module, use_y)
         f_names.extend(f_names_tmp)
         #print("after pass")
@@ -235,7 +238,6 @@ def module_epoch_passing(data: DataLoader,
                         softmax2 = torch.nn.Softmax(dim=1)
                         target = softmax2(target/2)
                         dist_loss = dist_loss + dist_obj(y_hat_t, target)
-                        print(dist_loss)
                         
                     #st = st/2
                     #dist_loss = dist_obj(y_hat,st)
@@ -264,12 +266,11 @@ def module_epoch_passing(data: DataLoader,
         try:
             output_y_hat.extend(y_hat.detach().cpu())
             output_y.extend(y.detach().cpu())
+
         except AttributeError:
             pass
         except TypeError:
             pass
-    #process = psutil.Process(os.getpid())
-    #print(process.memory_info().rss)
     return objective_output, output_y_hat, output_y, f_names, dist_objective_output
 
 def module_batch_passing(example: List,
@@ -406,13 +407,11 @@ def module_batch_passing(example: List,
     try:
         output_y_hat.extend(y_hat.detach().cpu())
         output_y.extend(y.detach().cpu())
-        torch.cuda.empty_cache()
+
     except AttributeError:
         pass
     except TypeError:
         pass
-    #process = psutil.Process(os.getpid())
-    #print(process.memory_info().rss)
     return objective_output, output_y_hat, output_y, f_names, dist_objective_output
 
 def module_distill_pass(data: DataLoader,
@@ -428,7 +427,6 @@ def module_distill_pass(data: DataLoader,
         for i, fname in enumerate(f_names_tmp):
             soft_targets[Path(fname).name] = y_hat[i, :, :]
     return soft_targets
-
 
 def module_forward_passing(data: MutableSequence[Tensor],
                            module: Module,
