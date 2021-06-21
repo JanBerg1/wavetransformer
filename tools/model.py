@@ -94,7 +94,6 @@ def get_model(settings_model: MutableMapping[str, Union[str, MutableMapping]],
 
     return model
 
-@profile
 def module_epoch_passing(data: DataLoader,
                          module: Module,
                          objective: Union[Callable[[Tensor, Tensor], Tensor], None],
@@ -104,7 +103,8 @@ def module_epoch_passing(data: DataLoader,
                          grad_norm_val: Optional[float] = -1.,
                          #soft_targets: dict = None,
                          model_orig: Module = None,
-                         dist_obj: Union[Callable[[Tensor, Tensor], Tensor], None] = None) \
+                         dist_obj: Union[Callable[[Tensor, Tensor], Tensor], None] = None,
+                         lwf_weight: int = 0) \
         -> Tuple[Tensor, List[Tensor], List[Tensor], List[str], Tensor]:
     """One full epoch passing.
 
@@ -148,7 +148,7 @@ def module_epoch_passing(data: DataLoader,
         #print("start of epoch:")
         #print(torch.cuda.memory_stats(device=None)["allocated_bytes.all.current"])
         process = psutil.Process(os.getpid())
-        print(process.memory_info().rss)
+        #print(process.memory_info().rss)
         y_hat, y, f_names_tmp = module_forward_passing(example, module, use_y)
         f_names.extend(f_names_tmp)
         #print("after pass")
@@ -178,7 +178,7 @@ def module_epoch_passing(data: DataLoader,
                     y_hat0 = y_hat0.transpose(0, 1)
                     # Add this value to settings
                     #eos = y_hat[0][y_hat.size()[1]-1]
-                    x = 0.5
+                    #x = 0.5
                     #st = [soft_targets[Path(x).name] for x in f_names_tmp]
                     #st = y_hat0
                     #st = pad_sequence(st, batch_first=True)
@@ -243,7 +243,7 @@ def module_epoch_passing(data: DataLoader,
                     #dist_loss = dist_obj(y_hat,st)
                     dist_loss = dist_loss / len(example)
                     dist_objective_output[i] = dist_loss.item() 
-                    loss = (1-x)*loss + x*dist_loss
+                    loss = (1-lwf_weight)*loss + lwf_weight*dist_loss
                     #loss = loss
                     
                 if has_optimizer:
@@ -282,7 +282,8 @@ def module_batch_passing(example: List,
                          grad_norm_val: Optional[float] = -1.,
                          #soft_targets: dict = None,
                          model_orig: Module = None,
-                         dist_obj: Union[Callable[[Tensor, Tensor], Tensor], None] = None) \
+                         dist_obj: Union[Callable[[Tensor, Tensor], Tensor], None] = None,
+                         lwf_weight: int = 0) \
         -> Tuple[Tensor, List[Tensor], List[Tensor], List[str], Tensor]:
     """One full epoch passing.
 
@@ -350,7 +351,7 @@ def module_batch_passing(example: List,
                 y_hat0,y0,f_names_tmp0 = module_forward_passing(example, model_orig, use_y)
             y0 = y0[:, 1:]
             y_hat0 = y_hat0.transpose(0, 1)
-            x = 0.5
+            #x = 0.5
  
             dist_loss = 0
             
@@ -388,9 +389,9 @@ def module_batch_passing(example: List,
                 target = softmax2(target/2)
                 dist_loss = dist_loss + dist_obj(y_hat_t, target)
                 
-            dist_loss = dist_loss / len(y_hat0)
+            dist_loss = dist_loss / len(example)
             dist_objective_output[0] = dist_loss.item()
-            loss = (1-x)*loss + x*dist_loss
+            loss = (1-lwf_weight)*loss + lwf_weight*dist_loss
 
                     
         if has_optimizer:

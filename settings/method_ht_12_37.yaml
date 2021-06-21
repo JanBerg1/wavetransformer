@@ -18,8 +18,11 @@ data:
   use_validation_split: No
 # ----------------------
 training:
+  batch_by_batch: Yes
+  lwf_weight: 0.7
+  evaluate_after_each: Yes
   nb_epochs: 300
-  patience: 100
+  patience: 50
   loss_thr: !!float 1e-2
   optimizer:
     lr: !!float 1e-4

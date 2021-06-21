@@ -147,7 +147,7 @@ def _do_evaluation(model: Module,
                    settings_io:  MutableMapping[str, Any],
                    indices_list: MutableSequence[str],
                    eva_secondary: bool = False) \
-        -> None:
+        -> Dict[str, Dict[str, Union[float, Dict[str, float]]]]:
     """Evaluation of an optimized model.
     :param model: Model to use.
     :type model: torch.nn.Module
@@ -216,6 +216,8 @@ def _do_evaluation(model: Module,
 
     for metric, values in metrics.items():
         logger_main.info(f'{metric:<7s}: {values["score"]:7.4f}')
+    
+    return metrics
 
 
 def _do_training(model: Module,
@@ -258,6 +260,11 @@ def _do_training(model: Module,
     loss_thr: float = settings_training['loss_thr']
     patience_counter = 0
     best_epoch = 0
+    
+    metrics_list = {
+        'caps': [],
+        'clotho': [],
+    }
 
     # Initialize logger
     logger_main = logger.bind(is_caption=False, indent=1)
@@ -318,36 +325,22 @@ def _do_training(model: Module,
     soft_targets = {}
     distill = True
     model_orig = copy.deepcopy(model)
-    #model_orig.eval()
+    model_orig.eval()
     
-    #if distill:
-        #model = model.eval()
-        #with no_grad():
-         #   soft_targets = module_distill_pass(data=training_data,
-          #              module=model)
-        #
-         #   epoch_output_v = module_epoch_passing(
-          #      data=training_data,
-           #     module=model,
-            #    objective=None,
-             #   optimizer=None)
-            #objective_output_v, output_y_hat_v, output_y_v, f_names_v, dist_objective_output = epoch_output_v
-            
-            #for i, fname in enumerate(f_names_v):
-             #   soft_targets[fname] = output_y_hat_v[i]
-            #logger_main.info(type(soft_targets))
-
-    for epoch in range(settings_training['nb_epochs']):
-       for i, training_data_ex in enumerate(training_data):
+    convergence = False
+    early_stopping_dif = 0
+    batch = 0
     
+    def train():
         # Log starting time
+        nonlocal model, prv_validation_metric, patience_counter, convergence, early_stopping_dif, metrics_list
         start_time = time()
 
         model = model.train()
         # Do a complete pass over our training data
         
-        #epoch_output = module_epoch_passing(
-        epoch_output = module_batch_passing(
+        if settings_training['batch_by_batch']:
+            epoch_output = module_batch_passing(
             example=training_data_ex,
             module=model,
             objective=objective,
@@ -357,7 +350,24 @@ def _do_training(model: Module,
             grad_norm_val=settings_training['grad_norm']['value'],
             #soft_targets=soft_targets,
             model_orig=model_orig,
-            dist_obj=dist_obj)
+            dist_obj=dist_obj,
+            lwf_weight=settings_training['lwf_weight'])
+        else:
+            epoch_output = module_epoch_passing(
+            data=training_data,
+            module=model,
+            objective=objective,
+            optimizer=optimizer,
+            use_y=settings_training['use_y'],
+            grad_norm=settings_training['grad_norm']['norm'],
+            grad_norm_val=settings_training['grad_norm']['value'],
+            #soft_targets=soft_targets,
+            model_orig=model_orig,
+            dist_obj=dist_obj,
+            lwf_weight=settings_training['lwf_weight'])
+        
+        #epoch_output = module_epoch_passing(
+        
         objective_output, output_y_hat, output_y, f_names, dist_objective_output = epoch_output
         # Get mean loss of training and print it with logger
         training_loss = objective_output.mean().item()
@@ -406,6 +416,9 @@ def _do_training(model: Module,
 
             metrics = evaluate_metrics(captions_pred, captions_gt)
             metric_str = f'Spider: {metrics["spider"]["score"]:>7.4f} | '
+            
+            del output_y_hat_v, captions_pred, captions_gt
+            gc.collect()
 
             if do_captions_decoding:
                 for metric, values in metrics.items():
@@ -417,32 +430,47 @@ def _do_training(model: Module,
         else:
             metric_str = ""
         
-        ## ADDED EVALUATION AFTER EACH BATCH
+        ## ADDED EVALUATION AFTER EACH BATCH/EPOCH
         
-        #logger_inner.info('Starting evaluation')
-        #_do_evaluation(
-        #    model=model,
-        #    settings_data=settings['dnn_training_settings']['data'],
-        #    settings_io=settings['dirs_and_files'],
-        #    indices_list=indices_list)
-        #logger_inner.info('Evaluation done')
-        
-        
-        #logger_inner.info('Starting evaluation')
-        #_do_evaluation(
-        #    model=model,
-        #    settings_data=settings['dnn_training_settings']['data'],
-        #    settings_io=settings['dirs_and_files'],
-        #    indices_list=indices_list,
-        #    eva_secondary=True)
-        #logger_inner.info('Evaluation done')
+        if settings_training['evaluate_after_each'] and batch % 50 == 0:
+            logger_inner.info('Starting evaluation')
+            metrics_list["caps"].append(_do_evaluation(
+                model=model,
+                settings_data=settings['dnn_training_settings']['data'],
+                settings_io=settings['dirs_and_files'],
+                indices_list=indices_list))
+            logger_inner.info('Evaluation done')
+            
+            logger_inner.info('Starting evaluation')
+            metrics_list["clotho"].append(_do_evaluation(
+                model=model,
+                settings_data=settings['dnn_training_settings']['data'],
+                settings_io=settings['dirs_and_files'],
+                indices_list=indices_list,
+                eva_secondary=True))
+            logger_inner.info('Evaluation done')       
         
         logger_main.info(f'Epoch: {epoch:05d} -- '
                          f'Loss (Tr/Va) : {training_loss:>7.4f}/{val_loss_str}/{training_dist_loss:>7.4f}  | '
                          f'{metric_str}Time: {time() - start_time:>5.3f}')
-        # logger_main.info("Logging memory usage")
-           
-           
+        # logger_main.info("Logging memory usage")    
+        
+        del epoch_output
+        if epoch_output_v:
+            del epoch_output_v
+        gc.collect()
+
+    for epoch in range(settings_training['nb_epochs']):
+        
+        if settings_training['batch_by_batch']:
+            for i, training_data_ex in enumerate(training_data):
+                print("batch")
+                train()
+                print(early_stopping_dif)
+                batch = batch + 1
+        else:
+            train()
+            
         # Check improvement of loss
         if early_stopping_dif > loss_thr:
             # Log the current loss
@@ -465,7 +493,8 @@ def _do_training(model: Module,
 
             # Increase patience counter
             patience_counter += 1
-
+        
+        patience_counter = epoch
         # Serialize the model and optimizer.
         for pt_obj, save_str in zip([model, optimizer], ['', '_optimizer']):
             pt_save(
@@ -481,16 +510,39 @@ def _do_training(model: Module,
             logger_main.info(f'Best validation metric {validation_metric} '
                              f'at epoch {best_epoch}.')
             break
+          
+        
 
     # Inform that we are done
     logger_main.info('Training done')
     logger_main.info(f'Best validation metric {validation_metric} '
                      f'at epoch {best_epoch}.')
+    
+    logger_inner.info('Starting evaluation')
+    metrics_list["caps"].append(_do_evaluation(
+        model=model,
+        settings_data=settings['dnn_training_settings']['data'],
+        settings_io=settings['dirs_and_files'],
+        indices_list=indices_list))
+    logger_inner.info('Evaluation done')
+    
+    logger_inner.info('Starting evaluation')
+    metrics_list["clotho"].append(_do_evaluation(
+        model=model,
+        settings_data=settings['dnn_training_settings']['data'],
+        settings_io=settings['dirs_and_files'],
+        indices_list=indices_list,
+        eva_secondary=True))
+    logger_inner.info('Evaluation done')    
 
     # Load best model
     model.load_state_dict(pt_load(
         str(model_dir.joinpath(
             f'best_{model_file_name}'))))
+    
+    file = open("metrics.p", "wb+")
+    pickle.dump(metrics_list, file)
+    file.close()
 
 
 def _get_nb_output_classes(settings: MutableMapping[str, Any]) \
